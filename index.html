@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Image Dropper</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
+    <style>
+      #drop-area {
+        border: 2px dashed #00d1b2;
+        padding: 2rem;
+        text-align: center;
+        cursor: pointer;
+        border-radius: 10px;
+        transition: background 0.3s;
+      }
+
+      #drop-area:hover {
+        background: #f0f0f0;
+      }
+
+
+      .spinner {
+        margin: 1rem auto;
+        border: 5px solid #eee;
+        border-top: 5px solid #00d1b2;
+        border-radius: 50%;
+        width: 48px;
+        height: 48px;
+        animation: rotation 1s linear infinite;
+      }
+      @keyframes rotation {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+    } 
+      canvas {
+        max-width: 100%;
+        height: auto;
+        display: block;
+        margin: 1rem auto;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="section">
+      <div class="container">
+        <h1 class="title has-text-centered">🖼️ Drag & Drop une image</h1>
+        <div id="drop-area" class="box">
+          <p class="subtitle">
+            Dépose une image ici ou clique pour en choisir une
+          </p>
+          <input
+            type="file"
+            id="fileElem"
+            accept="image/*"
+            style="display: none"
+          />
+          <button class="button is-info" onclick="fileElem.click()">
+            Choisir un fichier
+          </button>
+          <div id="spinner" class="spinner is-hidden"></div>
+        </div>
+        <canvas id="canvas"></canvas>
+      </div>
+    </section>
+
+    <script src="inference.js"></script>
+    <script>
+      const InferenceSession = ort.InferenceSession;
+      InferenceSession.create(
+        "./runs/train/yolo_frame_plate/weights/best.onnx"
+      ).then((session) => {
+        const dropArea = document.getElementById("drop-area");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const fileElem = document.getElementById("fileElem");
+        const spinner = document.getElementById("spinner");
+        dropArea.addEventListener("click", () => fileElem.click());
+
+        ["dragenter", "dragover"].forEach((eventName) => {
+          dropArea.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropArea.classList.add("has-background-light");
+          });
+        });
+
+        ["dragleave", "drop"].forEach((eventName) => {
+          dropArea.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropArea.classList.remove("has-background-light");
+          });
+        });
+
+        dropArea.addEventListener("drop", handleFiles);
+        fileElem.addEventListener("change", () =>
+          handleFiles({ dataTransfer: { files: fileElem.files } })
+        );
+
+        async function handleFiles(e) {
+          spinner.classList.remove("is-hidden");
+          const file = e.dataTransfer.files[0];
+          if (!file.type.startsWith("image/")) return;
+
+          const origin = await loadImage(file);
+          const resized = await loadImage(file, true);
+          const inputTensor = await ort.Tensor.fromImage(resized, {
+            resizeWidth: RESIZE,
+            resizeHeight: RESIZE,
+          });
+          const result = await session.run({ images: inputTensor });
+
+          const output = result[session.outputNames[0]];
+          const detections = parseResult(output);
+          const finalDetections = nonMaxSuppression(detections, 0.5);
+          draw(canvas, origin, finalDetections);
+          spinner.classList.add("is-hidden");
+          
+        }
+      });
+    </script>
+  </body>
+</html>
